@@ -19,10 +19,6 @@ from pathlib import Path
 from tqdm import tqdm
 from data_utils.ModelNetDataLoader import ModelNetDataLoader
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # 0번 GPU 사용
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = BASE_DIR
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
@@ -63,7 +59,7 @@ def test(model, loader, num_class=40):
     for j, (points, target) in tqdm(enumerate(loader), total=len(loader)):
 
         if not args.use_cpu:
-            points, target = points.to(device), target.to(device)
+            points, target = points.cuda(), target.cuda()
 
         points = points.transpose(2, 1)
         pred, _ = classifier(points)
@@ -143,8 +139,8 @@ def main(args):
     classifier.apply(inplace_relu)
 
     if not args.use_cpu:
-        classifier = classifier.to(device)
-        criterion = criterion.to(device)
+        classifier = classifier.cuda()
+        criterion = criterion.cuda()
 
     try:
         checkpoint = torch.load(str(exp_dir) + '/checkpoints/best_model.pth')
@@ -191,7 +187,7 @@ def main(args):
             points = points.transpose(2, 1)
 
             if not args.use_cpu:
-                points, target = points.to(device), target.to(device)
+                points, target = points.cuda(), target.cuda()
 
             pred, trans_feat = classifier(points)
             loss = criterion(pred, target.long(), trans_feat)

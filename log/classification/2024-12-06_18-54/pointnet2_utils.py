@@ -16,6 +16,66 @@ def pc_normalize(pc):
     pc = pc / m
     return pc
 
+
+def density_based_sample(points, npoint, size=0.5):
+    """
+    밀도 기반 Importance Sampling
+    Input:
+        points: input points position data, [B, N, C]
+        npoint: number of samples
+        size: 기준 그리드 크기
+    Return:
+        sampled_indices: 샘플링된 포인트의 인덱스, [B, npoint]
+    """
+    if len(points.shape) != 3:
+        raise ValueError(f"Expected input shape [B, N, C], but got {points.shape}")
+
+    B, N, C = points.shape
+    sampled_indices = []
+
+    for b in range(B):
+        # Extract current batch's points and convert to numpy
+        point = points[b].cpu().numpy()
+        xyz = point[:, :3]  # Use only XYZ coordinates
+
+        # Step 1: Compute grid indices
+        min_xyz = np.min(xyz, axis=0)
+        grid_idx = np.floor((xyz - min_xyz) / size).astype(int)
+
+        # Step 2: Assign points to blocks
+        blocks, block_idx = np.unique(grid_idx, axis=0, return_inverse=True)
+
+        # Step 3: Calculate block weights
+        block_point_map = {i: [] for i in range(len(blocks))}
+        for i, block_id in enumerate(block_idx):
+            block_point_map[block_id].append(i)
+
+        block_weights = np.array([len(indices) for indices in block_point_map.values()])
+        block_weights = np.exp(-block_weights)  # Weight decay based on density
+
+        # Step 4: Assign weights to points
+        weights = np.zeros(N)
+        for block_id, indices in block_point_map.items():
+            weights[indices] = block_weights[block_id]  # Assign block weight to each point in the block
+
+        # Step 5: Normalize weights
+        total_weight = np.sum(weights)
+        if total_weight == 0:
+            # Fallback to uniform sampling if all weights are zero
+            print(f"Warning: All weights are zero in batch {b}. Using uniform sampling.")
+            weights = np.ones(N) / N
+        else:
+            weights /= total_weight  # Normalize weights to sum to 1
+
+        # Step 6: Sample points based on weights
+        sampled = np.random.choice(N, size=npoint, replace=False, p=weights)
+        sampled_indices.append(sampled)
+
+    # Convert to tensor
+    sampled_indices = torch.tensor(sampled_indices, dtype=torch.long, device=points.device)
+    return sampled_indices
+
+
 def square_distance(src, dst):
     """
     Calculate Euclid distance between each two points.
@@ -121,22 +181,22 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
     """
     B, N, C = xyz.shape
     S = npoint
-    fps_idx = farthest_point_sample(xyz, npoint) # [B, npoint, C]
-    new_xyz = index_points(xyz, fps_idx)
+    sampled_idx = density_based_sample(xyz, npoint)  # 
+    new_xyz = index_points(xyz, sampled_idx)
     idx = query_ball_point(radius, nsample, xyz, new_xyz)
-    grouped_xyz = index_points(xyz, idx) # [B, npoint, nsample, C]
+    grouped_xyz = index_points(xyz, idx)  # [B, npoint, nsample, C]
     grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C)
 
     if points is not None:
         grouped_points = index_points(points, idx)
-        new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=-1) # [B, npoint, nsample, C+D]
+        new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=-1)  # [B, npoint, nsample, C+D]
     else:
         new_points = grouped_xyz_norm
+
     if returnfps:
-        return new_xyz, new_points, grouped_xyz, fps_idx
+        return new_xyz, new_points, grouped_xyz, sampled_idx
     else:
         return new_xyz, new_points
-
 
 def sample_and_group_all(xyz, points):
     """
@@ -236,7 +296,8 @@ class PointNetSetAbstractionMsg(nn.Module):
 
         B, N, C = xyz.shape
         S = self.npoint
-        new_xyz = index_points(xyz, farthest_point_sample(xyz, S))
+        sampled_idx = density_based_sample(xyz, S)
+        new_xyz = index_points(xyz, sampled_idx)
         new_points_list = []
         for i, radius in enumerate(self.radius_list):
             K = self.nsample_list[i]
@@ -313,3 +374,4 @@ class PointNetFeaturePropagation(nn.Module):
             bn = self.mlp_bns[i]
             new_points = F.relu(bn(conv(new_points)))
         return new_points
+
