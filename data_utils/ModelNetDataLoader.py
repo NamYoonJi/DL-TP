@@ -56,39 +56,54 @@ def density_based_sample(points, npoint, size=0.5):
     Return:
         sampled_indices: 샘플링된 포인트의 인덱스, [B, npoint]
     """
-    N, D = points.shape
-    xyz = point[:, :3]  
+    if len(points.shape) != 3:
+        raise ValueError(f"Expected input shape [B, N, C], but got {points.shape}")
 
-    min_xyz = np.min(xyz, axis=0)  # min값 찾고
-    grid_idx = np.floor((xyz - min_xyz) / size ).astype(int)  # size 대로 잘라준 다음에 그리드 인덱스 계산 
+    B, N, C = points.shape
+    sampled_indices = []
 
-    blocks, block_idx = np.unique(grid_idx, axis=0, return_inverse=True)
-    block_point_map = {i: [] for i in range(len(blocks))}
-    for i, block_id in enumerate(block_idx):
-        block_point_map[block_id].append(i)
+    for b in range(B):
+        # Extract current batch's points and convert to numpy
+        point = points[b].cpu().numpy()
+        xyz = point[:, :3]  # Use only XYZ coordinates
 
-    # 밀도 기반 k 계산, weight 주기 
-    block_weights = np.array([len(indices) for indices in block_point_map.values()]) # 블록 
-    block_weights = np.exp(-block_weights) # e^(-weight)로 가중치  줌. 
-    # 이 뒤에 정규화를 추가할 수도? 
+        # Step 1: Compute grid indices
+        min_xyz = np.min(xyz, axis=0)
+        grid_idx = np.floor((xyz - min_xyz) / size).astype(int)
 
-    # 블록 안에 있는 점들한테 가중치 주기
-    weights = np.zeros(N)
-    for block_id, indices in block_point_map.items():
-        for idx in indices:
-            weights[idx] = block_weights[block_id]  \
-    
-    total_weight = np.sum(weights)
-    if total_weight == 0:
+        # Step 2: Assign points to blocks
+        blocks, block_idx = np.unique(grid_idx, axis=0, return_inverse=True)
+
+        # Step 3: Calculate block weights
+        block_point_map = {i: [] for i in range(len(blocks))}
+        for i, block_id in enumerate(block_idx):
+            block_point_map[block_id].append(i)
+
+        block_weights = np.array([len(indices) for indices in block_point_map.values()])
+        block_weights = np.exp(-block_weights)  # Weight decay based on density
+
+        # Step 4: Assign weights to points
+        weights = np.zeros(N)
+        for block_id, indices in block_point_map.items():
+            weights[indices] = block_weights[block_id]  # Assign block weight to each point in the block
+
+        # Step 5: Normalize weights
+        total_weight = np.sum(weights)
+        if total_weight == 0:
             # Fallback to uniform sampling if all weights are zero
-        weights = np.ones(N) / N
-    else:
-        weights /= total_weight
+            print(f"Warning: All weights are zero in batch {b}. Using uniform sampling.")
+            weights = np.ones(N) / N
+        else:
+            weights /= total_weight  # Normalize weights to sum to 1
 
-    centroids = np.random.choice(N, size=npoint, replace=False, p=weights)  # 확률 기반 샘플링
-    point = point[centroids.astype(np.int32)]  # 샘플링된 포인트 좌표만 반환
+        # Step 6: Sample points based on weights
+        sampled = np.random.choice(N, size=npoint, replace=False, p=weights)
+        sampled_indices.append(sampled)
 
-    return point
+    # Convert to tensor
+    sampled_indices = torch.tensor(sampled_indices, dtype=torch.long, device=points.device)
+    return sampled_indices
+
 
 
 def load_off_vertices(file_path):
@@ -133,10 +148,10 @@ class ModelNetDataLoader(Dataset):
         shape_ids = {}
 
         # 각 ids에 리스트 형식으로 ['airplane', 'airplane_0640.off'] 저장
-        shape_ids['train'] = [[(line.strip().split(','))[1],(line.strip().split(','))[3]] for line in open('/home/yoon/Desktop/SKKU/DL/DL-TermProject/data/modelnet40_normal_resampled/metadata_modelnet40.csv') if 'train' in line]
-        shape_ids['test'] = [[(line.strip().split(','))[1],(line.strip().split(','))[3]] for line in open('/home/yoon/Desktop/SKKU/DL/DL-TermProject/data/modelnet40_normal_resampled/metadata_modelnet40.csv') if 'test' in line]
+        shape_ids['train'] = [[(line.strip().split(','))[1],(line.strip().split(','))[3]] for line in open('/content/drive/MyDrive/data/modelnet40_normal_resampled/metadata_modelnet40.csv') if 'train' in line]
+        shape_ids['test'] = [[(line.strip().split(','))[1],(line.strip().split(','))[3]] for line in open('/content/drive/MyDrive/data/modelnet40_normal_resampled/metadata_modelnet40.csv') if 'test' in line]
 
-        self.classes = sorted(list(set([(line.strip().split(','))[1] for line in open('/home/yoon/Desktop/SKKU/DL/DL-TermProject/data/modelnet40_normal_resampled/metadata_modelnet40.csv') if 'test' in line])))
+        self.classes = sorted(list(set([(line.strip().split(','))[1] for line in open('/content/drive/MyDrive/data/modelnet40_normal_resampled/metadata_modelnet40.csv') if 'test' in line])))
 
         assert (split == 'train' or split == 'test') # False 뜨면 에러 뽑고 중단.
 
@@ -224,7 +239,7 @@ if __name__ == '__main__':
     import torch
     import pandas as pd
 
-    data = ModelNetDataLoader('/home/yoon/Desktop/SKKU/DL/DL-TermProject/data/modelnet40_normal_resampled', split='train', args=' ')
+    data = ModelNetDataLoader('/content/drive/MyDrive/data/modelnet40_normal_resampled', split='train', args=' ')
     DataLoader = torch.utils.data.DataLoader(data, batch_size=12, shuffle=True)
     for point, label in DataLoader:
         print(point.shape)
