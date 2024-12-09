@@ -53,8 +53,6 @@ def density_based_sample(points, npoint, size=0.5):
         points: input points position data, [B, N, C]
         npoint: number of samples
         size: 기준 그리드 크기
-    Return:
-        sampled_indices: 샘플링된 포인트의 인덱스, [B, npoint]
     """
     if len(points.shape) != 3:
         raise ValueError(f"Expected input shape [B, N, C], but got {points.shape}")
@@ -63,9 +61,8 @@ def density_based_sample(points, npoint, size=0.5):
     sampled_indices = []
 
     for b in range(B):
-        # Extract current batch's points and convert to numpy
         point = points[b].cpu().numpy()
-        xyz = point[:, :3]  # Use only XYZ coordinates
+        xyz = point[:, :3] 
 
         # Step 1: Compute grid indices
         min_xyz = np.min(xyz, axis=0)
@@ -74,7 +71,7 @@ def density_based_sample(points, npoint, size=0.5):
         # Step 2: Assign points to blocks
         blocks, block_idx = np.unique(grid_idx, axis=0, return_inverse=True)
 
-        # Step 3: Calculate block weights
+
         block_point_map = {i: [] for i in range(len(blocks))}
         for i, block_id in enumerate(block_idx):
             block_point_map[block_id].append(i)
@@ -82,19 +79,18 @@ def density_based_sample(points, npoint, size=0.5):
         block_weights = np.array([len(indices) for indices in block_point_map.values()])
         block_weights = np.exp(-block_weights)  # Weight decay based on density
 
-        # Step 4: Assign weights to points
+    
         weights = np.zeros(N)
         for block_id, indices in block_point_map.items():
             weights[indices] = block_weights[block_id]  # Assign block weight to each point in the block
 
-        # Step 5: Normalize weights
+
         total_weight = np.sum(weights)
         if total_weight == 0:
-            # Fallback to uniform sampling if all weights are zero
             print(f"Warning: All weights are zero in batch {b}. Using uniform sampling.")
             weights = np.ones(N) / N
         else:
-            weights /= total_weight  # Normalize weights to sum to 1
+            weights /= total_weight 
 
         # Step 6: Sample points based on weights
         sampled = np.random.choice(N, size=npoint, replace=False, p=weights)
