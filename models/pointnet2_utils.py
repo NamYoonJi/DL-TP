@@ -127,16 +127,31 @@ def density_based_sample(points, npoint, size=0.5):
         # Step 5: Normalize weights
         total_weight = np.sum(weights)
         if total_weight == 0:
-            return farthest_point_sample(points, npoint)
-        
+            weights = np.ones(N) / N
+        else:
+            weights /= total_weight
 
         # Step 6: Sample points based on weights
-        sampled = np.random.choice(N, size=npoint, replace=False, p=weights)
+        sampled = np.random.choice(N, size=min(npoint, np.count_nonzero(weights)), replace=False, p=weights)
+        sampled_set = set(sampled)
+
+        # If more points are needed, sample uniformly from the remaining points
+        while len(sampled_set) < npoint:
+            remaining_points = list(set(range(N)) - sampled_set)
+            if not remaining_points:  # If no remaining points, break
+                break
+            additional_sample = np.random.choice(remaining_points, size=npoint - len(sampled_set), replace=False)
+            sampled_set.update(additional_sample)
+
+        # Convert sampled set to sorted list
+        sampled = sorted(sampled_set)
         sampled_indices.append(sampled)
 
     # Convert to tensor
     sampled_indices = torch.tensor(sampled_indices, dtype=torch.long, device=points.device)
     return sampled_indices
+
+
 
 
 
